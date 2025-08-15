@@ -1,0 +1,290 @@
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Fiktiv Teams-chatt (demo)</title>
+  <meta name="description" content="En animerad, konfigurerbar fiktiv Teams-chatt att lägga på GitHub Pages. Editera deltagare och meddelanden i inbäddad JSON eller via messages.json." />
+  <style>
+    :root{
+      /* Justera färger vid behov */
+      --bg:#f3f2f1;              /* Teams-liknande bakgrund */
+      --card:#fff;               /* kort/bubblor */
+      --muted:#616161;          /* sekundär text */
+      --text:#202124;           /* primär text */
+      --border:#e6e6e6;
+      --me:#6264a7;             /* "min" bubbel-färg (Teams-lila) */
+      --me-text:#fff;
+      --others:#ffffff;         /* andras bubbel-färg */
+      --others-text:#202124;
+      --accent:#4f52b2;         /* knappar/markering */
+    }
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; background:var(--bg); color:var(--text); font:16px/1.45 system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+      display:flex; flex-direction:column;
+    }
+    header{
+      position:sticky; top:0; z-index:10;
+      background:linear-gradient(180deg,#fff,rgba(255,255,255,.95));
+      border-bottom:1px solid var(--border);
+      padding:.75rem 1rem; display:flex; align-items:center; gap:.75rem;
+    }
+    .dot{width:8px;height:8px;background:#7f7f7f;border-radius:999px;display:inline-block}
+    .title{font-weight:700}
+    .tag{font-size:.8rem;color:var(--muted)}
+    .controls{margin-left:auto;display:flex;gap:.5rem;align-items:center}
+    button, .btn{border:1px solid var(--border); background:#fff; border-radius:.75rem; padding:.4rem .7rem; cursor:pointer}
+    button:hover{border-color:#cfcfcf}
+    main{flex:1; display:grid; grid-template-rows:auto 1fr auto;}
+    .chat{
+      height:100%; overflow:auto; padding:1rem; display:flex; flex-direction:column; gap:.5rem;
+    }
+    /* Systemrad (datumlinjal) */
+    .system{align-self:center; font-size:.82rem; color:var(--muted); background:#fff; border:1px solid var(--border); padding:.2rem .6rem; border-radius:999px; margin:.5rem 0}
+
+    /* Meddelanderad */
+    .row{display:flex; gap:.5rem; align-items:flex-end;}
+    .row.me{justify-content:flex-end}
+
+    .avatar{
+      width:36px; height:36px; border-radius:50%; flex:0 0 36px;
+      display:grid; place-items:center; font-weight:600; color:#fff;
+      background:#888; user-select:none;
+      box-shadow:0 1px 0 rgba(0,0,0,.04);
+    }
+
+    .bubble{
+      position:relative; max-width:min(700px,80%); padding:.55rem .7rem; border-radius:1rem; box-shadow:0 1px 0 rgba(0,0,0,.05); border:1px solid var(--border);
+      background:var(--others); color:var(--others-text);
+    }
+    .me .bubble{ background:var(--me); color:var(--me-text); border-color:transparent }
+
+    .name{font-size:.78rem; font-weight:700; margin-bottom:.15rem; opacity:.9}
+    .text{white-space:pre-wrap}
+    .meta{display:flex; gap:.4rem; align-items:center; font-size:.72rem; opacity:.8; margin-top:.25rem}
+
+    /* Skrivindikator */
+    .typing{
+      display:inline-flex; gap:.32rem; align-items:center; padding:.25rem .45rem; border-radius:.75rem; background:#e9e9ee; border:1px solid #dad9e0; color:#555; font-weight:600;
+    }
+    .typing .dot{animation:blink 1.3s infinite ease-in-out}
+    .typing .dot:nth-child(2){animation-delay:.15s}
+    .typing .dot:nth-child(3){animation-delay:.3s}
+    @keyframes blink{0%,80%,100%{opacity:.15; transform:translateY(0)}40%{opacity:1; transform:translateY(-2px)}}
+
+    /* Footer info */
+    footer{padding:.5rem 1rem; color:var(--muted); font-size:.8rem; display:flex; gap:1rem; align-items:center; border-top:1px solid var(--border); background:#fff}
+    code.inline{background:#f5f5f7;border:1px solid #e9e9ef;border-radius:.4rem;padding:.1rem .35rem}
+
+    /* Liten skärm: minska maxbredd */
+    @media (max-width:600px){ .bubble{max-width:86%} }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="dot"></div><div class="dot"></div><div class="dot"></div>
+    <div class="title">Teamets chatt</div>
+    <div class="tag" id="roomTag">#projekt-kanal</div>
+    <div class="controls">
+      <button id="btnRestart" title="Starta om">↻ Spela igen</button>
+      <button id="btnPause" title="Pausa/fortsätt">⏯︎ Pausa</button>
+      <label class="tag"><input type="checkbox" id="chkLoop"/> Loop</label>
+      <span class="tag">Hastighet
+        <select id="speed">
+          <option value="1">1x</option>
+          <option value="1.5">1.5x</option>
+          <option value="2">2x</option>
+        </select>
+      </span>
+    </div>
+  </header>
+  <main>
+    <div id="chat" class="chat" aria-live="polite" aria-atomic="false"></div>
+  </main>
+  <footer>
+    <div>
+      Redigera innehåll i <code class="inline">messages.json</code> (om finns) eller i den inbäddade JSON:en längst ned i denna fil. Lägg filerna i ett GitHub‑repo och aktivera GitHub Pages. 
+    </div>
+  </footer>
+
+  <!-- ===== Inbäddad data (fallback om messages.json saknas) ===== -->
+  <script type="application/json" id="chat-data">
+  {
+    "room": "#projekt-kanal",
+    "startsAt": "2025-08-15T09:00:00+02:00",
+    "timezone": "Europe/Stockholm",
+    "me": "anders",
+    "participants": [
+      {"id":"anders","name":"Anders Asplund","color":"#6a6cc7"},
+      {"id":"elin","name":"Elin","color":"#d17a22"},
+      {"id":"johanna","name":"Johanna","color":"#1f8f77"}
+    ],
+    "timeline": [
+      {"type":"system","text":"Fredag 15 augusti"},
+      {"type":"typing","from":"elin","ms":1200},
+      {"type":"message","from":"elin","text":"God morgon! Jag lägger upp utkastet till planen om 5 min.","delayMs":400},
+      {"type":"typing","from":"anders","ms":900},
+      {"type":"message","from":"anders","text":"Toppen! Jag förbereder sammanfattningen till politiken.","delayMs":250},
+      {"type":"typing","from":"johanna","ms":1100},
+      {"type":"message","from":"johanna","text":"Jag tar frågor/FAQ. Ska vi ha en punkt om uppföljning också?","delayMs":300},
+      {"type":"typing","from":"elin","ms":800},
+      {"type":"message","from":"elin","text":"Ja, jag lägger till en check efter 3 månader.","delayMs":250}
+    ]
+  }
+  </script>
+
+  <script>
+  // ====== Hjälpfunktioner ======
+  const $ = (sel, ctx=document) => ctx.querySelector(sel);
+  const $$ = (sel, ctx=document) => Array.from(ctx.querySelectorAll(sel));
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  function initials(name){
+    return name.split(/\s+/).map(p=>p[0]).join('').slice(0,2).toUpperCase();
+  }
+
+  function fmtTime(date){
+    try{ return new Intl.DateTimeFormat(undefined,{hour:'2-digit',minute:'2-digit'}).format(date); }
+    catch{ return date.toLocaleTimeString().slice(0,5) }
+  }
+
+  // ====== Ladda data (messages.json eller inbäddat) ======
+  async function loadData(){
+    const urlParam = new URLSearchParams(location.search);
+    const external = urlParam.get('src') || 'messages.json';
+    try{
+      const res = await fetch(external, {cache:'no-store'});
+      if(res.ok){
+        const json = await res.json();
+        return json;
+      }
+      throw new Error('Ingen extern messages.json');
+    }catch(err){
+      const fallback = JSON.parse(document.getElementById('chat-data').textContent);
+      return fallback;
+    }
+  }
+
+  // ====== Renderare ======
+  function makeRow({me, p, text, time, typing=false}){
+    const row = document.createElement('div');
+    row.className = 'row' + (me ? ' me' : '');
+
+    const avatar = document.createElement('div');
+    avatar.className = 'avatar';
+    avatar.style.background = p.color || '#888';
+    avatar.textContent = initials(p.name);
+
+    const bubble = document.createElement('div');
+    bubble.className = 'bubble';
+
+    if(typing){
+      const w = document.createElement('div');
+      w.className = 'typing';
+      w.innerHTML = '<span class="dot"></span><span class="dot"></span><span class="dot"></span>';
+      bubble.appendChild(w);
+    } else {
+      const name = document.createElement('div');
+      name.className = 'name';
+      name.textContent = p.name;
+      const txt = document.createElement('div');
+      txt.className = 'text';
+      txt.textContent = text;
+      const meta = document.createElement('div');
+      meta.className = 'meta';
+      meta.textContent = fmtTime(time);
+      bubble.appendChild(name); bubble.appendChild(txt); bubble.appendChild(meta);
+    }
+
+    if(me){
+      // egen rad: bubblan före avatar
+      row.appendChild(bubble);
+      row.appendChild(avatar);
+    }else{
+      row.appendChild(avatar);
+      row.appendChild(bubble);
+    }
+
+    return row;
+  }
+
+  function makeSystem(text){
+    const el = document.createElement('div');
+    el.className = 'system';
+    el.textContent = text;
+    return el;
+  }
+
+  // ====== Spelare ======
+  let abort = false;
+  let paused = false;
+  function setPaused(v){ paused = v; $('#btnPause').textContent = v ? '▶︎ Fortsätt' : '⏸︎ Pausa'; }
+
+  async function play(data){
+    abort = false; setPaused(false);
+    const chat = document.getElementById('chat');
+    chat.innerHTML = '';
+
+    $('#roomTag').textContent = data.room || '#kanal';
+
+    const byId = Object.fromEntries(data.participants.map(p=>[p.id,p]));
+    const meId = data.me || null;
+
+    let cursor = new Date(data.startsAt || Date.now());
+
+    for(const step of data.timeline){
+      if(abort) return;
+
+      if(step.type === 'system'){
+        chat.appendChild(makeSystem(step.text));
+      }
+      else if(step.type === 'typing'){
+        const p = byId[step.from];
+        const row = makeRow({me: step.from===meId, p, typing:true});
+        chat.appendChild(row);
+        chat.scrollTop = chat.scrollHeight;
+        const speed = parseFloat($('#speed').value)||1;
+        await waitWhile(step.ms / speed);
+        row.remove();
+      }
+      else if(step.type === 'message'){
+        const p = byId[step.from];
+        const row = makeRow({me: step.from===meId, p, text: step.text, time: cursor});
+        chat.appendChild(row);
+        chat.scrollTop = chat.scrollHeight;
+        const speed = parseFloat($('#speed').value)||1;
+        await waitWhile((step.delayMs || 500) / speed);
+        // öka klockan lite så det ser rimligt ut
+        cursor = new Date(cursor.getTime() + Math.max(30_000, (step.delayMs||500)*5));
+      }
+    }
+
+    if($('#chkLoop').checked && !abort){
+      await sleep(600);
+      play(data);
+    }
+  }
+
+  async function waitWhile(ms){
+    const start = performance.now();
+    while(performance.now() - start < ms){
+      if(abort) return;
+      if(paused){ await sleep(60); continue; }
+      await sleep(16);
+    }
+  }
+
+  // ====== UI-hooks ======
+  document.addEventListener('DOMContentLoaded', async () => {
+    const data = await loadData();
+    $('#btnRestart').addEventListener('click', ()=>{ abort = true; play(data); });
+    $('#btnPause').addEventListener('click', ()=> setPaused(!paused));
+    $('#speed').addEventListener('change', ()=>{});
+
+    play(data);
+  });
+  </script>
+</body>
+</html>
